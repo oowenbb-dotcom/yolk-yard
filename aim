@@ -1,0 +1,76 @@
+// client/js/aim-assist.js
+// Bounded, ADS-only aim assist for yolk-yard. Client-side only.
+// It eases YOUR input slightly toward a target within a small radius
+// while you are aiming down sights. It never picks or locks targets.
+
+export const AimAssist = {
+  // ---- Tunables (keep strength well below "lock-on") ----
+  enabled: true,
+  strength: 0.35,        // 0..1 blend of crosshair toward target
+  radius: 6,             // max angle (degrees) for assist to engage
+  onlyWhenAds: true,     // only eases your aim while aiming down sights
+
+  // ---- Internal ----
+  _camera: null,
+  _raycaster: null,
+  _objects: [],
+  _ray: null,
+  _targetOffset: null,
+  _fovScale: 1,
+
+  init(camera, scene) {
+    this._camera = camera;
+    // Collect all bodies that can be aimed at (players, targets).
+    // Adapt the selector to your actual scene graph:
+    //   scene.traverse(o => { if (o.userData && o.userData.isEnemy) ... })
+    this._objects = [];
+    scene.traverse((o) => {
+      if (o.isMesh && o.userData && o.userData.isEnemy) this._objects.push(o);
+    });
+    this._raycaster = new THREE.Raycaster();
+    this._ray = new THREE.Vector3();
+  },
+
+  // Call every frame in your render loop, BEFORE applying camera rotation.
+  update(dt) {
+    if (!this.enabled || !this._camera) return;
+    if (this.onlyWhenAds && !this._isAds()) return;
+
+    // Direction the player is looking.
+    this._camera.getWorldDirection(this._ray);
+    const target = this._findTargetInRadius(this._ray);
+    if (!target) return;
+
+    // Build a target look direction from the camera to the target.
+    const desired = new THREE.Vector3().subVectors(target, this._camera.position).normalize();
+
+    // Blend a small amount toward the desired direction.
+    const t = this.strength * Math.min(dt * 10, 1);
+    this._ray.lerp(desired, t).normalize();
+
+    // Apply as a yaw (and optional pitch) offset to the camera.
+    const yaw = Math.atan2(this._ray.x, this._ray.z) - Math.atan2(this._camera.getWorldDirection(new THREE.Vector3()).x, this._camera.getWorldDirection(new THREE.Vector3()).z);
+    this._camera.rotation.y += yaw * t;
+  },
+
+  // Find the nearest enemy inside the assist radius (angle from view center).
+  _findTargetInRadius(viewDir) {
+    let best = null;
+    let bestAngle = this.radius;
+    for (const obj of this._objects) {
+      if (!obj.visible || !obj.userData.alive !== false) continue;
+      const toObj = new THREE.Vector3().subVectors(obj.getWorldPosition(new THREE.Vector3()), this._camera.position).normalize();
+      const angle = THREE.MathUtils.radToDeg(viewDir.angleTo(toObj));
+      if (angle <= bestAngle) {
+        bestAngle = angle;
+        best = obj.getWorldPosition(new THREE.Vector3()).clone();
+      }
+    }
+    return best;
+  },
+
+  // Replace with your actual ADS check (e.g. right-mouse held).
+  _isAds() {
+    return (typeof window !== 'undefined') && window.isAimingDownSights === true;
+  },
+};
